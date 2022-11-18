@@ -105,6 +105,44 @@ class Separator(object):
         return y_spec, v_spec
 
 
+def inference(model, device, input, output_dir, sr=44100, hop_length=1024, n_fft=2048, batchsize=4, cropsize=256, tta=False, postprocess=False, output_image=True):
+    print('loading wave source...', end=' ')
+    X, sr = librosa.load(input, sr, False, dtype=np.float32, res_type='kaiser_fast')
+    basename = os.path.splitext(os.path.basename(input))[0]
+    os.makedirs(output_dir, exist_ok=True)
+
+    if X.ndim == 1:
+        # mono to stereo
+        X = np.asarray([X, X])
+
+    print('stft of wave source...', end=' ')
+    X_spec = spec_utils.wave_to_spectrogram(X, hop_length, n_fft)
+
+    sp = Separator(model, device, batchsize, cropsize, postprocess)
+
+    if tta:
+        y_spec, v_spec = sp.separate_tta(X_spec)
+    else:
+        y_spec, v_spec = sp.separate(X_spec)
+
+    print('inverse stft of instruments...', end=' ')
+    instrument_wave = spec_utils.spectrogram_to_wave(y_spec, hop_length=hop_length)
+
+    sf.write(f'{output_dir}/{basename}_Instruments.wav', instrument_wave.T, sr)
+
+    print('inverse stft of vocals...', end=' ')
+    vocal_wave = spec_utils.spectrogram_to_wave(v_spec, hop_length=hop_length)
+    sf.write(f'{output_dir}/{basename}_Vocals.wav', vocal_wave.T, sr)
+
+    if output_image:
+        instrument_image = spec_utils.spectrogram_to_image(y_spec)
+        utils.imwrite(f'{output_dir}/{basename}_Instruments.jpg', instrument_image)
+
+        vocal_image = spec_utils.spectrogram_to_image(v_spec)
+        utils.imwrite(f'{output_dir}/{basename}_Vocals.jpg', vocal_image)
+    return instrument_wave, vocal_wave, instrument_image, vocal_image
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--gpu', '-g', type=int, default=-1)
@@ -128,52 +166,20 @@ def main():
     if torch.cuda.is_available() and args.gpu >= 0:
         device = torch.device('cuda:{}'.format(args.gpu))
         model.to(device)
-    print('done')
-
-    print('loading wave source...', end=' ')
-    X, sr = librosa.load(
-        args.input, args.sr, False, dtype=np.float32, res_type='kaiser_fast')
-    basename = os.path.splitext(os.path.basename(args.input))[0]
-    print('done')
-
-    if X.ndim == 1:
-        # mono to stereo
-        X = np.asarray([X, X])
-
-    print('stft of wave source...', end=' ')
-    X_spec = spec_utils.wave_to_spectrogram(X, args.hop_length, args.n_fft)
-    print('done')
-
-    sp = Separator(model, device, args.batchsize, args.cropsize, args.postprocess)
-
-    if args.tta:
-        y_spec, v_spec = sp.separate_tta(X_spec)
-    else:
-        y_spec, v_spec = sp.separate(X_spec)
-
-    print('validating output directory...', end=' ')
-    output_dir = args.output_dir
-    if output_dir != "":  # modifies output_dir if theres an arg specified
-        output_dir = output_dir.rstrip('/') + '/'
-        os.makedirs(output_dir, exist_ok=True)
-    print('done')
-
-    print('inverse stft of instruments...', end=' ')
-    wave = spec_utils.spectrogram_to_wave(y_spec, hop_length=args.hop_length)
-    print('done')
-    sf.write('{}{}_Instruments.wav'.format(output_dir, basename), wave.T, sr)
-
-    print('inverse stft of vocals...', end=' ')
-    wave = spec_utils.spectrogram_to_wave(v_spec, hop_length=args.hop_length)
-    print('done')
-    sf.write('{}{}_Vocals.wav'.format(output_dir, basename), wave.T, sr)
-
-    if args.output_image:
-        image = spec_utils.spectrogram_to_image(y_spec)
-        utils.imwrite('{}{}_Instruments.jpg'.format(output_dir, basename), image)
-
-        image = spec_utils.spectrogram_to_image(v_spec)
-        utils.imwrite('{}{}_Vocals.jpg'.format(output_dir, basename), image)
+    
+    inference(
+      model,
+      args.device,
+      args.input,
+      args.sr,
+      args.hop_length,
+      args.n_fft,
+      args.batchsize,
+      args.cropsize,
+      args.tta,
+      args.postprocess,
+      args.output_image
+    )
 
 
 if __name__ == '__main__':

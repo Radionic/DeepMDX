@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import wandb
 
 import numpy as np
 import torch
@@ -13,7 +14,8 @@ import torch.utils.data
 from lib import dataset
 from lib import nets
 from lib import spec_utils
-
+from inference import inference
+from tqdm import tqdm
 
 def setup_logger(name, logfile='LOGFILENAME.log'):
     logger = logging.getLogger(name)
@@ -40,7 +42,7 @@ def train_epoch(dataloader, model, device, optimizer, accumulation_steps):
     sum_loss = 0
     crit = nn.L1Loss()
 
-    for itr, (X_batch, y_batch) in enumerate(dataloader):
+    for itr, (X_batch, y_batch) in enumerate(tqdm(dataloader)):
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
 
@@ -73,7 +75,7 @@ def validate_epoch(dataloader, model, device):
     crit = nn.L1Loss()
 
     with torch.no_grad():
-        for X_batch, y_batch in dataloader:
+        for X_batch, y_batch in tqdm(dataloader):
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device)
 
@@ -94,10 +96,10 @@ def main():
     p.add_argument('--sr', '-r', type=int, default=44100)
     p.add_argument('--hop_length', '-H', type=int, default=1024)
     p.add_argument('--n_fft', '-f', type=int, default=2048)
-    p.add_argument('--dataset', '-d', required=True)
+    p.add_argument('--dataset', '-d', required=True, default='data')
     p.add_argument('--split_mode', '-S', type=str, choices=['random', 'subdirs'], default='random')
-    p.add_argument('--learning_rate', '-l', type=float, default=0.001)
-    p.add_argument('--lr_min', type=float, default=0.0001)
+    p.add_argument('--learning_rate', '-l', type=float, default=1e-3)
+    p.add_argument('--lr_min', type=float, default=1e-4)
     p.add_argument('--lr_decay_factor', type=float, default=0.9)
     p.add_argument('--lr_decay_patience', type=int, default=6)
     p.add_argument('--batchsize', '-B', type=int, default=4)
@@ -108,7 +110,7 @@ def main():
     p.add_argument('--val_filelist', '-V', type=str, default=None)
     p.add_argument('--val_batchsize', '-b', type=int, default=6)
     p.add_argument('--val_cropsize', '-c', type=int, default=256)
-    p.add_argument('--num_workers', '-w', type=int, default=6)
+    p.add_argument('--num_workers', '-w', type=int, default=48)
     p.add_argument('--epoch', '-E', type=int, default=200)
     p.add_argument('--reduction_rate', '-R', type=float, default=0.0)
     p.add_argument('--reduction_level', '-L', type=float, default=0.2)
@@ -229,27 +231,33 @@ def main():
         train_loss = train_epoch(train_dataloader, model, device, optimizer, args.accumulation_steps)
         val_loss = validate_epoch(val_dataloader, model, device)
 
-        logger.info(
-            '  * training loss = {:.6f}, validation loss = {:.6f}'
-            .format(train_loss, val_loss)
-        )
-
         scheduler.step(val_loss)
 
-        if val_loss < best_loss:
-            best_loss = val_loss
-            logger.info('  * best validation loss')
-            model_path = 'models/model_iter{}.pth'.format(epoch)
-            torch.save(model.state_dict(), model_path)
+        instrument_wave, vocal_wave, instrument_image, vocal_image = inference(model, device, '/project/asc2022/plus/DeepMDX/data/val/unravel.wav', '/project/asc2022/plus/DeepMDX')
+        wandb.log({
+          'train/loss': train_loss,
+          'val/loss': val_loss,
+          'val/instrument_wav': wandb.Audio(instrument_wave.T, sample_rate=44100),
+          'val/vocal_wav': wandb.Audio(vocal_wave.T, sample_rate=44100),
+          'val/instrument_spectrogram': wandb.Image(instrument_image),
+          'val/vocal_wav_spectrogram': wandb.Image(vocal_image),
+        })
+        logger.info(f'  * training loss = {train_loss:.6f}, validation loss = {val_loss:.6f}')
 
         log.append([train_loss, val_loss])
         with open('loss_{}.json'.format(timestamp), 'w', encoding='utf8') as f:
             json.dump(log, f, ensure_ascii=False)
 
+        model_path = f'models/model_iter{epoch}.pth'
+        torch.save(model.state_dict(), model_path)
+        if val_loss < best_loss:
+            best_loss = val_loss
+            logger.info('  * best validation loss')
 
 if __name__ == '__main__':
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
     logger = setup_logger(__name__, 'train_{}.log'.format(timestamp))
+    wandb.init(project="Music Demixing")
 
     try:
         main()
