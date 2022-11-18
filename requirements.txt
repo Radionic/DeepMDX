@@ -4,3 +4,4 @@ opencv_python>=4.2.0
 wandb
 torch
 tqdm
+numpy
