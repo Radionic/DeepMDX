@@ -16,3 +16,6 @@
 
 *~
 .vscode/
+
+.ipynb_checkpoints
+data
