@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import wandb
+import glob
 
 import numpy as np
 import torch
@@ -16,6 +17,8 @@ from lib import nets
 from lib import spec_utils
 from inference import inference
 from tqdm import tqdm
+from pathlib import Path
+
 
 def setup_logger(name, logfile='LOGFILENAME.log'):
     logger = logging.getLogger(name)
@@ -233,15 +236,22 @@ def main():
 
         scheduler.step(val_loss)
 
-        instrument_wave, vocal_wave, instrument_image, vocal_image = inference(model, device, '/project/asc2022/plus/DeepMDX/data/val/unravel.wav', '/project/asc2022/plus/DeepMDX')
         wandb.log({
           'train/loss': train_loss,
           'val/loss': val_loss,
-          'val/instrument_wav': wandb.Audio(instrument_wave.T, sample_rate=44100),
-          'val/vocal_wav': wandb.Audio(vocal_wave.T, sample_rate=44100),
-          'val/instrument_spectrogram': wandb.Image(instrument_image),
-          'val/vocal_wav_spectrogram': wandb.Image(vocal_image),
         })
+        if epoch % 5 == 0 or epoch == args.epoch - 1:
+            log_data = {}
+            val_paths = glob.glob('/project/asc2022/plus/DeepMDX/data/val/*.wav')
+            save_dir = '/project/asc2022/plus/DeepMDX'
+            for val_path in val_paths:
+                audio_name = Path(val_path).stem
+                instrument_wave, vocal_wave, instrument_image, vocal_image = inference(model, device, val_path, save_dir)
+                log_data[f'val/instrument_wav_{audio_name}'] = wandb.Audio(instrument_wave.T, sample_rate=44100)
+                log_data[f'val/vocal_wav_{audio_name}'] = wandb.Audio(vocal_wave.T, sample_rate=44100)
+                log_data[f'val/instrument_spectrogram_{audio_name}'] = wandb.Image(instrument_image)
+                log_data[f'val/vocal_spectrogram_{audio_name}'] = wandb.Image(vocal_image)
+            wandb.log(log_data)
         logger.info(f'  * training loss = {train_loss:.6f}, validation loss = {val_loss:.6f}')
 
         log.append([train_loss, val_loss])
