@@ -1,57 +1,33 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-
 from lib import spec_utils
+from lib.utils import _weights_init
 
 
 class Conv2DBNActiv(nn.Module):
 
     def __init__(self, nin, nout, ksize=3, stride=1, pad=1, dilation=1, activ=nn.ReLU):
         super(Conv2DBNActiv, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(
-                nin, nout,
-                kernel_size=ksize,
-                stride=stride,
-                padding=pad,
-                dilation=dilation,
-                bias=False
-            ),
-            nn.BatchNorm2d(nout),
-            activ()
+        self.conv = nn.Conv2d(
+            nin, nout,
+            kernel_size=ksize,
+            stride=stride,
+            padding=pad,
+            dilation=dilation,
+            bias=False
         )
+        self.bn = nn.BatchNorm2d(nout)
+        self.activ = activ()
+    
+        _weights_init(self.conv)
+        _weights_init(self.bn)
 
     def __call__(self, x):
-        return self.conv(x)
-
-
-# class SeperableConv2DBNActiv(nn.Module):
-
-#     def __init__(self, nin, nout, ksize=3, stride=1, pad=1, dilation=1, activ=nn.ReLU):
-#         super(SeperableConv2DBNActiv, self).__init__()
-#         self.conv = nn.Sequential(
-#             nn.Conv2d(
-#                 nin, nin,
-#                 kernel_size=ksize,
-#                 stride=stride,
-#                 padding=pad,
-#                 dilation=dilation,
-#                 groups=nin,
-#                 bias=False
-#             ),
-#             nn.Conv2d(
-#                 nin, nout,
-#                 kernel_size=1,
-#                 bias=False
-#             ),
-#             nn.BatchNorm2d(nout),
-#             activ()
-#         )
-
-#     def __call__(self, x):
-#         return self.conv(x)
-
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.activ(x)
+        return x
 
 class Encoder(nn.Module):
 
@@ -87,7 +63,6 @@ class Decoder(nn.Module):
 
         if self.dropout is not None:
             h = self.dropout(h)
-
         return h
 
 

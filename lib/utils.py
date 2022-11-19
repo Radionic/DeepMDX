@@ -3,6 +3,15 @@ import os
 import cv2
 import numpy as np
 
+from torch import nn
+
+def _weights_init(m):
+    if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.normal_(m.weight, 0.0, 0.02)
+    if isinstance(m, nn.BatchNorm2d):
+        nn.init.normal_(m.weight, 0.0, 0.02)
+        nn.init.constant_(m.bias, 0)
+
 
 def imread(filename, flags=cv2.IMREAD_COLOR, dtype=np.uint8):
     try:

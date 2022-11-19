@@ -3,7 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from lib import layers
-
+from lib.utils import _weights_init
 
 class BaseNet(nn.Module):
 
@@ -72,6 +72,9 @@ class CascadedNet(nn.Module):
 
         self.out = nn.Conv2d(nout, 2, 1, bias=False)
         self.aux_out = nn.Conv2d(3 * nout // 4, 2, 1, bias=False)
+
+        _weights_init(self.out)
+        _weights_init(self.aux_out)
 
     def forward(self, x):
         x = x[:, :, :self.max_bin]
