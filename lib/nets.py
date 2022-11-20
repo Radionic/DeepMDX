@@ -135,7 +135,8 @@ class CascadedNet(nn.Module):
                 pad=(0, 0, 0, self.output_bin - aux.size()[2]),
                 mode='replicate'
             )
-            return mask, aux
+            dense_logits = torch.cat([f3_in, f3], dim=1)
+            return mask, aux, dense_logits
         else:
             return mask
 
@@ -157,3 +158,19 @@ class CascadedNet(nn.Module):
             assert pred_mag.size()[3] > 0
 
         return pred_mag
+
+class CascadedNetWithGAN(nn.Module):
+    def __init__(self, n_fft, nout=32, nout_lstm=128):
+        super(CascadedNetWithGAN, self).__init__()
+        self.generator = CascadedNet(n_fft, nout, nout_lstm)
+        self.discriminator = layers.Discriminator(60)
+
+    def generator_forward(self, x):
+        return self.generator(x)
+
+    def discriminator_forward(self, dense_logits, y):
+        # (B, 2, max_bin, W)
+        y = y[:, :, :self.generator.max_bin]
+        # (B, 60, max_bin, W)
+        input = torch.cat([dense_logits, y], dim=1)
+        return self.discriminator(input)

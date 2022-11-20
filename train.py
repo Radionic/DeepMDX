@@ -40,56 +40,80 @@ def setup_logger(name, logfile='LOGFILENAME.log'):
     return logger
 
 
-def train_epoch(dataloader, model, device, optimizer, accumulation_steps):
+def train_epoch(dataloader, model, device, optimizers):
     model.train()
-    sum_loss = 0
-    crit = nn.L1Loss()
+    optimizer_G, optimizer_D = optimizers
+    sum_loss_l1 = 0
+    sum_loss_gen_adv = 0
+    sum_loss_dis_real = 0
+    sum_loss_dis_fake = 0
+    pixel_crit = nn.L1Loss()
+    gan_crit = nn.BCEWithLogitsLoss()
 
     for itr, (X_batch, y_batch) in enumerate(tqdm(dataloader)):
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
 
-        pred, aux = model(X_batch)
+        # ----- Generator ------
+        pred, aux, dense_logits = model.generator_forward(X_batch)
 
-        loss_main = crit(pred * X_batch, y_batch)
-        loss_aux = crit(aux * X_batch, y_batch)
+        loss_gan = gan_crit(pred * X_batch, torch.ones_like(pred))
+        loss_main = pixel_crit(pred * X_batch, y_batch)
+        loss_aux = pixel_crit(aux * X_batch, y_batch)
 
-        loss = loss_main * 0.8 + loss_aux * 0.2
-        accum_loss = loss / accumulation_steps
-        accum_loss.backward()
+        loss = loss_main * 0.6 + loss_aux * 0.1 + loss_gan * 0.3
+        loss.backward()
+        optimizer_G.step()
+        model.generator.zero_grad()
 
-        if (itr + 1) % accumulation_steps == 0:
-            optimizer.step()
-            model.zero_grad()
+        # The ratio 8:2 here is for comparsion on previous models without GAN 
+        sum_loss_l1 += (loss_main * 0.8 + loss_aux * 0.2).item() * len(X_batch)
+        sum_loss_gen_adv += loss_gan.item() * len(X_batch)
 
-        sum_loss += loss.item() * len(X_batch)
+        # ----- Discriminator -----
+        pred_real = model.discriminator_forward(dense_logits.detach(), y_batch)
+        loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
 
-    # the rest batch
-    if (itr + 1) % accumulation_steps != 0:
-        optimizer.step()
-        model.zero_grad()
+        pred_fake = model.discriminator_forward(dense_logits.detach(), (pred * X_batch).detach())
+        loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
 
-    return sum_loss / len(dataloader.dataset)
+        loss = 0.5 * (loss_real + loss_fake)
+        loss.backward()
+        optimizer_D.step()
+        model.discriminator.zero_grad()
+
+        sum_loss_dis_real += loss_real.item() * len(X_batch)
+        sum_loss_dis_fake += loss_fake.item() * len(X_batch)
+
+    dateset_len = len(dataloader.dataset)
+    return {
+      'train/loss': sum_loss_l1 / dateset_len,
+      'train/gen_adv_loss': sum_loss_gen_adv / dateset_len,
+      'train/dis_real_loss': sum_loss_dis_real / dateset_len,
+      'train/dis_fake_loss': sum_loss_dis_fake / dateset_len
+    }
 
 
 def validate_epoch(dataloader, model, device):
     model.eval()
     sum_loss = 0
-    crit = nn.L1Loss()
+    pixel_crit = nn.L1Loss()
 
     with torch.no_grad():
         for X_batch, y_batch in tqdm(dataloader):
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device)
 
-            pred = model.predict(X_batch)
+            pred = model.generator.predict(X_batch)
 
             y_batch = spec_utils.crop_center(y_batch, pred)
-            loss = crit(pred, y_batch)
+            loss = pixel_crit(pred, y_batch)
 
             sum_loss += loss.item() * len(X_batch)
 
-    return sum_loss / len(dataloader.dataset)
+    return {
+      'val/loss': sum_loss / len(dataloader.dataset)
+    }
 
 
 def main():
@@ -153,20 +177,33 @@ def main():
         logger.info('{} {} {}'.format(i + 1, os.path.basename(X_fname), os.path.basename(y_fname)))
 
     device = torch.device('cpu')
-    model = nets.CascadedNet(args.n_fft, 32, 128)
+    model = nets.CascadedNetWithGAN(args.n_fft, 32, 128)
     if args.pretrained_model is not None:
         model.load_state_dict(torch.load(args.pretrained_model, map_location=device))
     if torch.cuda.is_available() and args.gpu >= 0:
         device = torch.device('cuda:{}'.format(args.gpu))
         model.to(device)
 
-    optimizer = torch.optim.Adam(
-        filter(lambda p: p.requires_grad, model.parameters()),
+    optimizer_G = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.generator.parameters()),
         lr=args.learning_rate
     )
+    optimizer_D = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.discriminator.parameters()),
+        lr=args.learning_rate
+    )
+    optimizers = [optimizer_G, optimizer_D]
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
+    scheduler_G = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer_G,
+        factor=args.lr_decay_factor,
+        patience=args.lr_decay_patience,
+        threshold=1e-6,
+        min_lr=args.lr_min,
+        verbose=True
+    )
+    scheduler_D = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer_D,
         factor=args.lr_decay_factor,
         patience=args.lr_decay_patience,
         threshold=1e-6,
@@ -213,7 +250,7 @@ def main():
         sr=args.sr,
         hop_length=args.hop_length,
         n_fft=args.n_fft,
-        offset=model.offset
+        offset=model.generator.offset
     )
 
     val_dataset = dataset.VocalRemoverValidationSet(
@@ -231,15 +268,14 @@ def main():
     best_loss = np.inf
     for epoch in range(args.epoch):
         logger.info('# epoch {}'.format(epoch))
-        train_loss = train_epoch(train_dataloader, model, device, optimizer, args.accumulation_steps)
+        train_loss = train_epoch(train_dataloader, model, device, optimizers)
         val_loss = validate_epoch(val_dataloader, model, device)
 
-        scheduler.step(val_loss)
-
-        wandb.log({
-          'train/loss': train_loss,
-          'val/loss': val_loss,
-        })
+        log_data = {
+          **train_loss,
+          **val_loss
+        }
+        wandb.log(log_data)
         if epoch % 5 == 0 or epoch == args.epoch - 1:
             log_data = {}
             val_paths = glob.glob('/project/asc2022/plus/DeepMDX/data/val/*.wav')
@@ -252,14 +288,16 @@ def main():
                 log_data[f'val/instrument_spectrogram_{audio_name}'] = wandb.Image(instrument_image)
                 log_data[f'val/vocal_spectrogram_{audio_name}'] = wandb.Image(vocal_image)
             wandb.log(log_data)
+
+        train_loss = train_loss['train/loss']
+        val_loss = val_loss['val/loss']
+        scheduler_G.step(val_loss)
+        scheduler_D.step(val_loss)
         logger.info(f'  * training loss = {train_loss:.6f}, validation loss = {val_loss:.6f}')
 
-        log.append([train_loss, val_loss])
-        with open('loss_{}.json'.format(timestamp), 'w', encoding='utf8') as f:
-            json.dump(log, f, ensure_ascii=False)
-
-        model_path = f'models/model_iter{epoch}.pth'
-        torch.save(model.state_dict(), model_path)
+        model_path = f'models_gan/model_iter{epoch}.pth'
+        if epoch % 5 == 0 or epoch == args.epoch - 1:
+            torch.save(model.state_dict(), model_path)
         if val_loss < best_loss:
             best_loss = val_loss
             logger.info('  * best validation loss')

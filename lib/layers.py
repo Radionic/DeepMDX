@@ -133,3 +133,17 @@ class LSTMModule(nn.Module):
         h = h.permute(1, 2, 3, 0)
 
         return h
+
+class Discriminator(nn.Module):
+
+    def __init__(self, in_channels):
+        super(Discriminator, self).__init__()
+        self.model = nn.Sequential(
+            Conv2DBNActiv(in_channels, 128, 4, 2, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(128, 256, 4, 2, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(256, 512, 4, 2, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(512, 1, 4, 2, 1, activ=nn.LeakyReLU),
+        )
+
+    def forward(self, x):
+        return self.model(x)

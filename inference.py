@@ -17,7 +17,7 @@ class Separator(object):
 
     def __init__(self, model, device, batchsize, cropsize, postprocess=False):
         self.model = model
-        self.offset = model.offset
+        self.offset = model.generator.offset
         self.device = device
         self.batchsize = batchsize
         self.cropsize = cropsize
@@ -41,7 +41,7 @@ class Separator(object):
                 X_batch = X_dataset[i: i + self.batchsize]
                 X_batch = torch.from_numpy(X_batch).to(self.device)
 
-                pred = self.model.predict_mask(X_batch)
+                pred = self.model.generator.predict_mask(X_batch)
 
                 pred = pred.detach().cpu().numpy()
                 pred = np.concatenate(pred, axis=2)
