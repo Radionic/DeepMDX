@@ -47,27 +47,27 @@ class CascadedNet(nn.Module):
         super(CascadedNet, self).__init__()
         self.max_bin = n_fft // 2
         self.output_bin = n_fft // 2 + 1
-        self.nin_lstm = self.max_bin // 2
         self.offset = 64
+        nin_lstm = self.max_bin // 2
 
         self.stg1_low_band_net = nn.Sequential(
-            BaseNet(2, nout // 2, self.nin_lstm // 2, nout_lstm),
+            BaseNet(2, nout // 2, nin_lstm // 2, nout_lstm),
             layers.Conv2DBNActiv(nout // 2, nout // 4, 1, 1, 0)
         )
         self.stg1_high_band_net = BaseNet(
-            2, nout // 4, self.nin_lstm // 2, nout_lstm // 2
+            2, nout // 4, nin_lstm // 2, nout_lstm // 2
         )
 
         self.stg2_low_band_net = nn.Sequential(
-            BaseNet(nout // 4 + 2, nout, self.nin_lstm // 2, nout_lstm),
+            BaseNet(nout // 4 + 2, nout, nin_lstm // 2, nout_lstm),
             layers.Conv2DBNActiv(nout, nout // 2, 1, 1, 0)
         )
         self.stg2_high_band_net = BaseNet(
-            nout // 4 + 2, nout // 2, self.nin_lstm // 2, nout_lstm // 2
+            nout // 4 + 2, nout // 2, nin_lstm // 2, nout_lstm // 2
         )
 
         self.stg3_full_band_net = BaseNet(
-            3 * nout // 4 + 2, nout, self.nin_lstm, nout_lstm
+            3 * nout // 4 + 2, nout, nin_lstm, nout_lstm
         )
 
         self.out = nn.Conv2d(nout, 2, 1, bias=False)
@@ -77,25 +77,47 @@ class CascadedNet(nn.Module):
         _weights_init(self.aux_out)
 
     def forward(self, x):
+        # x: (B, 2, H, W)
+        # max_bin: 1024
+
+        # (B, 2, max_bin, W), where 2 is stereo
         x = x[:, :, :self.max_bin]
 
+        # ----- Low and High Band Training in Stage 1 -----
+        # bandw: 512
         bandw = x.size()[2] // 2
+        # (B, 2, bandw, W)
         l1_in = x[:, :, :bandw]
+        # (B, 2, bandw, W)
         h1_in = x[:, :, bandw:]
+        # (B, 8, bandw, W)
         l1 = self.stg1_low_band_net(l1_in)
+        # (B, 8, bandw, W)
         h1 = self.stg1_high_band_net(h1_in)
+        # (B, 8, bandw * 2, W)
         aux1 = torch.cat([l1, h1], dim=2)
 
+        # ----- Low and High Band Training in Stage 2 -----
+        # (B, 10, bandw, W)
         l2_in = torch.cat([l1_in, l1], dim=1)
+        # (B, 10, bandw, W)
         h2_in = torch.cat([h1_in, h1], dim=1)
+        # (B, 16, bandw, W)
         l2 = self.stg2_low_band_net(l2_in)
+        # (B, 16, bandw, W)
         h2 = self.stg2_high_band_net(h2_in)
+        # (B, 16, bandw * 2, W)
         aux2 = torch.cat([l2, h2], dim=2)
 
+        # ----- Full Band Training -----
+        # (B, 26, bandw * 2, W)
         f3_in = torch.cat([x, aux1, aux2], dim=1)
+        # (B, 32, bandw * 2, W)
         f3 = self.stg3_full_band_net(f3_in)
 
+        # (B, 2, max_bin, W)
         mask = torch.sigmoid(self.out(f3))
+        # (B, 2, max_bin + 1, W)
         mask = F.pad(
             input=mask,
             pad=(0, 0, 0, self.output_bin - mask.size()[2]),
@@ -103,8 +125,11 @@ class CascadedNet(nn.Module):
         )
 
         if self.training:
+            # (B, 24, max_bin, W)
             aux = torch.cat([aux1, aux2], dim=1)
+            # (B, 2, max_bin, W)
             aux = torch.sigmoid(self.aux_out(aux))
+            # (B, 2, max_bin + 1, W)
             aux = F.pad(
                 input=aux,
                 pad=(0, 0, 0, self.output_bin - aux.size()[2]),
