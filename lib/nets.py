@@ -164,6 +164,11 @@ class CascadedNetWithGAN(nn.Module):
         super(CascadedNetWithGAN, self).__init__()
         self.generator = CascadedNet(n_fft, nout, nout_lstm)
         self.discriminator = layers.Discriminator(60)
+      
+    def set_requires_grad(self, net, requires_grad):
+        if net is not None:
+            for param in net.parameters():
+                param.requires_grad = requires_grad
 
     def generator_forward(self, x):
         return self.generator(x)

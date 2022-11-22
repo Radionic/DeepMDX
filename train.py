@@ -40,7 +40,7 @@ def setup_logger(name, logfile='LOGFILENAME.log'):
     return logger
 
 
-def train_epoch(dataloader, model, device, optimizers):
+def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False):
     model.train()
     optimizer_G, optimizer_D = optimizers
     sum_loss_l1 = 0
@@ -54,23 +54,29 @@ def train_epoch(dataloader, model, device, optimizers):
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
 
-        # ----- Generator ------
+        # ----- Train Generator ------
         pred, aux, dense_logits = model.generator_forward(X_batch)
 
-        loss_gan = gan_crit(pred * X_batch, torch.ones_like(pred))
         loss_main = pixel_crit(pred * X_batch, y_batch)
         loss_aux = pixel_crit(aux * X_batch, y_batch)
-
-        loss = loss_main * 0.6 + loss_aux * 0.1 + loss_gan * 0.3
+        if use_adv_loss:
+            model.set_requires_grad(model.discriminator, False)
+            pred_fake = model.discriminator_forward(dense_logits, y_batch)
+            loss_gan = gan_crit(pred_fake, torch.ones_like(pred_fake))
+            loss = loss_main * 0.8 + loss_aux * 0.1 + loss_gan * 0.1
+        else:
+            loss = loss_main * 0.8 + loss_aux * 0.2
         loss.backward()
         optimizer_G.step()
         model.generator.zero_grad()
 
         # The ratio 8:2 here is for comparsion on previous models without GAN 
         sum_loss_l1 += (loss_main * 0.8 + loss_aux * 0.2).item() * len(X_batch)
-        sum_loss_gen_adv += loss_gan.item() * len(X_batch)
+        if use_adv_loss:
+            sum_loss_gen_adv += loss_gan.item() * len(X_batch)
 
-        # ----- Discriminator -----
+        # ----- Train Discriminator -----
+        model.set_requires_grad(model.discriminator, True)
         pred_real = model.discriminator_forward(dense_logits.detach(), y_batch)
         loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
 
@@ -123,7 +129,7 @@ def main():
     p.add_argument('--sr', '-r', type=int, default=44100)
     p.add_argument('--hop_length', '-H', type=int, default=1024)
     p.add_argument('--n_fft', '-f', type=int, default=2048)
-    p.add_argument('--dataset', '-d', required=True, default='data')
+    p.add_argument('--dataset', '-d', required=True)
     p.add_argument('--split_mode', '-S', type=str, choices=['random', 'subdirs'], default='random')
     p.add_argument('--learning_rate', '-l', type=float, default=1e-3)
     p.add_argument('--lr_min', type=float, default=1e-4)
@@ -177,7 +183,7 @@ def main():
         logger.info('{} {} {}'.format(i + 1, os.path.basename(X_fname), os.path.basename(y_fname)))
 
     device = torch.device('cpu')
-    model = nets.CascadedNetWithGAN(args.n_fft, 32, 128)
+    model = nets.CascadedNetWithGAN(args.n_fft)
     if args.pretrained_model is not None:
         model.load_state_dict(torch.load(args.pretrained_model, map_location=device))
     if torch.cuda.is_available() and args.gpu >= 0:
@@ -268,7 +274,9 @@ def main():
     best_loss = np.inf
     for epoch in range(args.epoch):
         logger.info('# epoch {}'.format(epoch))
-        train_loss = train_epoch(train_dataloader, model, device, optimizers)
+        
+        use_adv_loss = epoch >= 10
+        train_loss = train_epoch(train_dataloader, model, device, optimizers, use_adv_loss)
         val_loss = validate_epoch(val_dataloader, model, device)
 
         log_data = {
@@ -295,7 +303,7 @@ def main():
         scheduler_D.step(val_loss)
         logger.info(f'  * training loss = {train_loss:.6f}, validation loss = {val_loss:.6f}')
 
-        model_path = f'models_gan/model_iter{epoch}.pth'
+        model_path = f'models/model_iter{epoch}.pth'
         if epoch % 5 == 0 or epoch == args.epoch - 1:
             torch.save(model.state_dict(), model_path)
         if val_loss < best_loss:
