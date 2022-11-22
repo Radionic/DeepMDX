@@ -48,15 +48,31 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False):
     sum_loss_dis_real = 0
     sum_loss_dis_fake = 0
     pixel_crit = nn.L1Loss()
-    gan_crit = nn.BCEWithLogitsLoss()
+    gan_crit = nn.MSELoss()
 
     for itr, (X_batch, y_batch) in enumerate(tqdm(dataloader)):
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
 
-        # ----- Train Generator ------
         pred, aux, dense_logits = model.generator_forward(X_batch)
 
+        # ----- Train Discriminator -----
+        model.set_requires_grad(model.discriminator, True)
+        pred_real = model.discriminator_forward(dense_logits.detach(), y_batch)
+        loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
+
+        pred_fake = model.discriminator_forward(dense_logits.detach(), (pred * X_batch).detach())
+        loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
+
+        loss = 0.5 * (loss_real + loss_fake)
+        loss.backward()
+        optimizer_D.step()
+        model.discriminator.zero_grad()
+
+        sum_loss_dis_real += loss_real.item() * len(X_batch)
+        sum_loss_dis_fake += loss_fake.item() * len(X_batch)
+
+        # ----- Train Generator ------
         loss_main = pixel_crit(pred * X_batch, y_batch)
         loss_aux = pixel_crit(aux * X_batch, y_batch)
         if use_adv_loss:
@@ -75,21 +91,6 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False):
         if use_adv_loss:
             sum_loss_gen_adv += loss_gan.item() * len(X_batch)
 
-        # ----- Train Discriminator -----
-        model.set_requires_grad(model.discriminator, True)
-        pred_real = model.discriminator_forward(dense_logits.detach(), y_batch)
-        loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
-
-        pred_fake = model.discriminator_forward(dense_logits.detach(), (pred * X_batch).detach())
-        loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
-
-        loss = 0.5 * (loss_real + loss_fake)
-        loss.backward()
-        optimizer_D.step()
-        model.discriminator.zero_grad()
-
-        sum_loss_dis_real += loss_real.item() * len(X_batch)
-        sum_loss_dis_fake += loss_fake.item() * len(X_batch)
 
     dateset_len = len(dataloader.dataset)
     return {
@@ -275,7 +276,7 @@ def main():
     for epoch in range(args.epoch):
         logger.info('# epoch {}'.format(epoch))
         
-        use_adv_loss = epoch >= 10
+        use_adv_loss = True # epoch >= 10
         train_loss = train_epoch(train_dataloader, model, device, optimizers, use_adv_loss)
         val_loss = validate_epoch(val_dataloader, model, device)
 

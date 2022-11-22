@@ -142,7 +142,7 @@ class Discriminator(nn.Module):
             Conv2DBNActiv(in_channels, 128, 4, 2, 1, activ=nn.LeakyReLU),
             Conv2DBNActiv(128, 256, 4, 2, 1, activ=nn.LeakyReLU),
             Conv2DBNActiv(256, 512, 4, 2, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(512, 1, 4, 2, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(512, 1, 4, 1, 1, activ=nn.LeakyReLU),
         )
 
     def forward(self, x):
