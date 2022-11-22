@@ -163,7 +163,7 @@ class CascadedNetWithGAN(nn.Module):
     def __init__(self, n_fft, nout=32, nout_lstm=128):
         super(CascadedNetWithGAN, self).__init__()
         self.generator = CascadedNet(n_fft, nout, nout_lstm)
-        self.discriminator = layers.Discriminator(60)
+        self.discriminator = layers.Discriminator(4)
       
     def set_requires_grad(self, net, requires_grad):
         if net is not None:
@@ -173,9 +173,10 @@ class CascadedNetWithGAN(nn.Module):
     def generator_forward(self, x):
         return self.generator(x)
 
-    def discriminator_forward(self, dense_logits, y):
+    def discriminator_forward(self, x, y):
+        # (B, 2, max_bin, W)
+        x = x[:, :, :self.generator.max_bin]
         # (B, 2, max_bin, W)
         y = y[:, :, :self.generator.max_bin]
-        # (B, 60, max_bin, W)
-        input = torch.cat([dense_logits, y], dim=1)
+        input = torch.cat([x, y], dim=1)
         return self.discriminator(input)

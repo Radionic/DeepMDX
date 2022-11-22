@@ -40,7 +40,7 @@ def setup_logger(name, logfile='LOGFILENAME.log'):
     return logger
 
 
-def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False):
+def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train_discriminator=False):
     model.train()
     optimizer_G, optimizer_D = optimizers
     sum_loss_l1 = 0
@@ -57,27 +57,28 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False):
         pred, aux, dense_logits = model.generator_forward(X_batch)
 
         # ----- Train Discriminator -----
-        model.set_requires_grad(model.discriminator, True)
-        pred_real = model.discriminator_forward(dense_logits.detach(), y_batch)
-        loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
+        if train_discriminator:
+            model.set_requires_grad(model.discriminator, True)
+            pred_real = model.discriminator_forward(X_batch, y_batch)
+            loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
 
-        pred_fake = model.discriminator_forward(dense_logits.detach(), (pred * X_batch).detach())
-        loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
+            pred_fake = model.discriminator_forward(X_batch, (pred * X_batch).detach())
+            loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
 
-        loss = 0.5 * (loss_real + loss_fake)
-        loss.backward()
-        optimizer_D.step()
-        model.discriminator.zero_grad()
+            loss = 0.5 * (loss_real + loss_fake)
+            loss.backward()
+            optimizer_D.step()
+            model.discriminator.zero_grad()
 
-        sum_loss_dis_real += loss_real.item() * len(X_batch)
-        sum_loss_dis_fake += loss_fake.item() * len(X_batch)
+            sum_loss_dis_real += loss_real.item() * len(X_batch)
+            sum_loss_dis_fake += loss_fake.item() * len(X_batch)
 
         # ----- Train Generator ------
         loss_main = pixel_crit(pred * X_batch, y_batch)
         loss_aux = pixel_crit(aux * X_batch, y_batch)
         if use_adv_loss:
             model.set_requires_grad(model.discriminator, False)
-            pred_fake = model.discriminator_forward(dense_logits, y_batch)
+            pred_fake = model.discriminator_forward(X_batch, pred * X_batch)
             loss_gan = gan_crit(pred_fake, torch.ones_like(pred_fake))
             loss = loss_main * 0.8 + loss_aux * 0.1 + loss_gan * 0.1
         else:
@@ -277,7 +278,10 @@ def main():
         logger.info('# epoch {}'.format(epoch))
         
         use_adv_loss = True # epoch >= 10
-        train_loss = train_epoch(train_dataloader, model, device, optimizers, use_adv_loss)
+        # Alternately train discriminator
+        train_discriminator = True # epoch <= 10 or epoch % 2 == 0
+        # print("Train discriminator:", train_discriminator)
+        train_loss = train_epoch(train_dataloader, model, device, optimizers, use_adv_loss, train_discriminator)
         val_loss = validate_epoch(val_dataloader, model, device)
 
         log_data = {
