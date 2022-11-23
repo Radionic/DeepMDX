@@ -135,8 +135,7 @@ class CascadedNet(nn.Module):
                 pad=(0, 0, 0, self.output_bin - aux.size()[2]),
                 mode='replicate'
             )
-            dense_logits = torch.cat([f3_in, f3], dim=1)
-            return mask, aux, dense_logits
+            return mask, aux
         else:
             return mask
 

@@ -48,22 +48,28 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train
     sum_loss_dis_real = 0
     sum_loss_dis_fake = 0
     pixel_crit = nn.L1Loss()
-    gan_crit = nn.MSELoss()
+    gan_crit = nn.BCEWithLogitsLoss()
+
+    gen_dist = []
+    dis_real_dist = []
+    dis_fake_dist = []
 
     for itr, (X_batch, y_batch) in enumerate(tqdm(dataloader)):
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
 
-        pred, aux, dense_logits = model.generator_forward(X_batch)
+        pred, aux = model.generator_forward(X_batch)
 
         # ----- Train Discriminator -----
         if train_discriminator:
             model.set_requires_grad(model.discriminator, True)
             pred_real = model.discriminator_forward(X_batch, y_batch)
             loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
+            dis_real_dist += (pred_real.detach().cpu().numpy().flatten() > 0.5).astype(int).tolist()
 
             pred_fake = model.discriminator_forward(X_batch, (pred * X_batch).detach())
             loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
+            dis_fake_dist += (pred_fake.detach().cpu().numpy().flatten() > 0.5).astype(int).tolist()
 
             loss = 0.5 * (loss_real + loss_fake)
             loss.backward()
@@ -80,6 +86,7 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train
             model.set_requires_grad(model.discriminator, False)
             pred_fake = model.discriminator_forward(X_batch, pred * X_batch)
             loss_gan = gan_crit(pred_fake, torch.ones_like(pred_fake))
+            gen_dist += (pred_fake.detach().cpu().numpy().flatten() > 0.5).astype(int).tolist()
             loss = loss_main * 0.8 + loss_aux * 0.1 + loss_gan * 0.1
         else:
             loss = loss_main * 0.8 + loss_aux * 0.2
@@ -92,13 +99,16 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train
         if use_adv_loss:
             sum_loss_gen_adv += loss_gan.item() * len(X_batch)
 
-
+    dist_num_samples = len(gen_dist)
     dateset_len = len(dataloader.dataset)
     return {
       'train/loss': sum_loss_l1 / dateset_len,
       'train/gen_adv_loss': sum_loss_gen_adv / dateset_len,
       'train/dis_real_loss': sum_loss_dis_real / dateset_len,
-      'train/dis_fake_loss': sum_loss_dis_fake / dateset_len
+      'train/dis_fake_loss': sum_loss_dis_fake / dateset_len,
+      'train/gen_dist': sum(gen_dist) / dist_num_samples,
+      'train/dis_real_dist':sum(dis_real_dist) / dist_num_samples,
+      'train/dis_fake_dist': sum(dis_fake_dist) / dist_num_samples,
     }
 
 
