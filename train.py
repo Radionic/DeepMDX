@@ -40,7 +40,7 @@ def setup_logger(name, logfile='LOGFILENAME.log'):
     return logger
 
 
-def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train_discriminator=False):
+def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train_discriminator=False, train_generator=False):
     model.train()
     optimizer_G, optimizer_D = optimizers
     sum_loss_l1 = 0
@@ -65,11 +65,11 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train
             model.set_requires_grad(model.discriminator, True)
             pred_real = model.discriminator_forward(X_batch, y_batch)
             loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
-            dis_real_dist += (pred_real.detach().cpu().numpy().flatten() > 0.5).astype(int).tolist()
+            dis_real_dist += torch.sigmoid(pred_real).detach().cpu().numpy().flatten().tolist()
 
             pred_fake = model.discriminator_forward(X_batch, (pred * X_batch).detach())
             loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
-            dis_fake_dist += (pred_fake.detach().cpu().numpy().flatten() > 0.5).astype(int).tolist()
+            dis_fake_dist += torch.sigmoid(pred_fake).detach().cpu().numpy().flatten().tolist()
 
             loss = 0.5 * (loss_real + loss_fake)
             loss.backward()
@@ -80,37 +80,36 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train
             sum_loss_dis_fake += loss_fake.item() * len(X_batch)
 
         # ----- Train Generator ------
-        loss_main = pixel_crit(pred * X_batch, y_batch)
-        loss_aux = pixel_crit(aux * X_batch, y_batch)
-        if use_adv_loss:
-            model.set_requires_grad(model.discriminator, False)
-            pred_fake = model.discriminator_forward(X_batch, pred * X_batch)
-            loss_gan = gan_crit(pred_fake, torch.ones_like(pred_fake))
-            gen_dist += (pred_fake.detach().cpu().numpy().flatten() > 0.5).astype(int).tolist()
-            loss = loss_main * 0.8 + loss_aux * 0.1 + loss_gan * 0.1
-        else:
-            loss = loss_main * 0.8 + loss_aux * 0.2
-        loss.backward()
-        optimizer_G.step()
-        model.generator.zero_grad()
+        if train_generator:
+            loss_main = pixel_crit(pred * X_batch, y_batch)
+            loss_aux = pixel_crit(aux * X_batch, y_batch)
+            if use_adv_loss:
+                model.set_requires_grad(model.discriminator, False)
+                pred_fake = model.discriminator_forward(X_batch, pred * X_batch)
+                loss_gan = gan_crit(pred_fake, torch.ones_like(pred_fake))
+                gen_dist += torch.sigmoid(pred_fake).detach().cpu().numpy().flatten().tolist()
+                loss = loss_main * 0.8 + loss_aux * 0.1 + loss_gan * 0.1
+            else:
+                loss = loss_main * 0.8 + loss_aux * 0.2
+            loss.backward()
+            optimizer_G.step()
+            model.generator.zero_grad()
 
-        # The ratio 8:2 here is for comparsion on previous models without GAN 
-        sum_loss_l1 += (loss_main * 0.8 + loss_aux * 0.2).item() * len(X_batch)
-        if use_adv_loss:
-            sum_loss_gen_adv += loss_gan.item() * len(X_batch)
+            # The ratio 8:2 here is for comparsion on previous models without GAN 
+            sum_loss_l1 += (loss_main * 0.8 + loss_aux * 0.2).item() * len(X_batch)
+            if use_adv_loss:
+                sum_loss_gen_adv += loss_gan.item() * len(X_batch)
 
-    dist_num_samples = len(gen_dist)
     dateset_len = len(dataloader.dataset)
     return {
       'train/loss': sum_loss_l1 / dateset_len,
       'train/gen_adv_loss': sum_loss_gen_adv / dateset_len,
       'train/dis_real_loss': sum_loss_dis_real / dateset_len,
       'train/dis_fake_loss': sum_loss_dis_fake / dateset_len,
-      'train/gen_dist': sum(gen_dist) / dist_num_samples,
-      'train/dis_real_dist':sum(dis_real_dist) / dist_num_samples,
-      'train/dis_fake_dist': sum(dis_fake_dist) / dist_num_samples,
+      'train/gen_dist': wandb.Histogram(gen_dist),
+      'train/dis_real_dist':wandb.Histogram(dis_real_dist),
+      'train/dis_fake_dist': wandb.Histogram(dis_fake_dist),
     }
-
 
 def validate_epoch(dataloader, model, device):
     model.eval()
@@ -287,11 +286,10 @@ def main():
     for epoch in range(args.epoch):
         logger.info('# epoch {}'.format(epoch))
         
-        use_adv_loss = True # epoch >= 10
-        # Alternately train discriminator
-        train_discriminator = True # epoch <= 10 or epoch % 2 == 0
-        # print("Train discriminator:", train_discriminator)
-        train_loss = train_epoch(train_dataloader, model, device, optimizers, use_adv_loss, train_discriminator)
+        use_adv_loss = epoch >= 15
+        train_discriminator = True # epoch >= 10
+        train_generator = epoch >= 10
+        train_loss = train_epoch(train_dataloader, model, device, optimizers, use_adv_loss, train_discriminator, train_generator)
         val_loss = validate_epoch(val_dataloader, model, device)
 
         log_data = {
@@ -314,8 +312,10 @@ def main():
 
         train_loss = train_loss['train/loss']
         val_loss = val_loss['val/loss']
-        scheduler_G.step(val_loss)
-        scheduler_D.step(val_loss)
+        if train_generator:
+            scheduler_G.step(val_loss)
+        if train_discriminator:
+            scheduler_D.step(val_loss)
         logger.info(f'  * training loss = {train_loss:.6f}, validation loss = {val_loss:.6f}')
 
         model_path = f'models/model_iter{epoch}.pth'
