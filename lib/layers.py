@@ -139,10 +139,16 @@ class Discriminator(nn.Module):
     def __init__(self, in_channels):
         super(Discriminator, self).__init__()
         self.model = nn.Sequential(
-            Conv2DBNActiv(in_channels, 128, 4, 2, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(128, 256, 4, 2, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(256, 512, 4, 2, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(512, 1, 4, 1, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(in_channels, 32, 3, 1, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(32, 32, 3, 2, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(32, 64, 3, 1, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(64, 64, 3, 2, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(64, 128, 3, 1, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(128, 128, 3, 2, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(128, 256, 3, 1, 1, activ=nn.LeakyReLU),
+            Conv2DBNActiv(256, 256, 3, 2, 1, activ=nn.LeakyReLU),
+            
+            nn.Conv2d(256, 1, 3, 1, 1),
         )
 
     def forward(self, x):
