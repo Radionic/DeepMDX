@@ -7,8 +7,8 @@ import numpy as np
 import soundfile as sf
 from tqdm import tqdm
 
-from lib import dataset
-from lib import spec_utils
+from src import dataset
+from src import spec_utils
 
 
 if __name__ == '__main__':

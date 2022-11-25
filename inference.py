@@ -7,10 +7,10 @@ import soundfile as sf
 import torch
 from tqdm import tqdm
 
-from lib import dataset
-from lib import nets
-from lib import spec_utils
-from lib import utils
+from src import dataset
+from src import nets
+from src import spec_utils
+from src import utils
 
 
 class Separator(object):
