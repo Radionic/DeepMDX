@@ -20,3 +20,5 @@
 .ipynb_checkpoints
 data
 wandb
+checkpoints/*.ckpt
+outputs
