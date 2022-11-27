@@ -17,9 +17,11 @@ def main(cfg: DictConfig) -> None:
     
     logger = instantiate(cfg.logger)
     
-    model = DeepMDX(**cfg.model)
     if cfg['ckpt_path'] is not None:
-        model.load_from_checkpoint(cfg['ckpt_path'])
+        model = DeepMDX.load_from_checkpoint(cfg['ckpt_path'], **cfg.model)
+    else:
+        model = DeepMDX(**cfg.model)
+        
     dm = DeepMDXDataModule(**cfg.datamodule)
     trainer = instantiate(cfg.trainer, logger=logger)
     trainer.fit(model, datamodule=dm)

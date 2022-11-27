@@ -1,6 +1,5 @@
 batch_size: 4
 num_workers: 12
-lr: 2e-3
 name: null
 project: Music Demixing
 ckpt_path: null
@@ -11,13 +10,21 @@ dataset_dir: data
 model:
   batch_size: ${batch_size}
   num_workers: ${num_workers}
-  lr: ${lr}
-  warmup_steps: 2000
+  lr_g: 1e-3
+  lr_d: 2e-4
+  lambda_aux: 2e-1
+  lambda_adv: 1e-3
+  warmup_steps_d:
+  warmup_steps_g:
+  generator_step: 1
+  discriminator_step: 2
 
 datamodule:
   batch_size: ${batch_size}
   num_workers: ${num_workers}
   dataset_dir: ${dataset_dir}
+  reduction_rate: 0.5
+  mixup_rate: 0.5
 
 logger:
   _target_: pytorch_lightning.loggers.WandbLogger
@@ -28,18 +35,18 @@ trainer:
   _target_: pytorch_lightning.Trainer
   accelerator: gpu
   devices: 1
-  log_every_n_steps: 100
+  log_every_n_steps: 50
   max_epochs: 500
-  val_check_interval: 1300
-  check_val_every_n_epoch: null
+  val_check_interval: null
+  check_val_every_n_epoch: 2
   gradient_clip_val: 1.0
   callbacks:
     - _target_: pytorch_lightning.callbacks.ModelSummary
-      max_depth: 3
+      max_depth: 5
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: step
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
-      dirpath: checkpoints
+      dirpath: checkpoints/gan_bce
       filename: '{epoch:02d}-{val_loss:.2f}'
       monitor: val_loss
       save_top_k: 3

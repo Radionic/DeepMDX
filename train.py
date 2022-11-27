@@ -12,9 +12,9 @@ import torch
 import torch.nn as nn
 import torch.utils.data
 
-from lib import dataset
-from lib import nets
-from lib import spec_utils
+from src import dataset
+from src import nets
+from src import spec_utils
 from inference import inference
 from tqdm import tqdm
 from pathlib import Path
@@ -43,7 +43,9 @@ def setup_logger(name, logfile='LOGFILENAME.log'):
 def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train_discriminator=False, train_generator=False):
     model.train()
     optimizer_G, optimizer_D = optimizers
-    sum_loss_l1 = 0
+    sum_loss = 0
+    sum_content_loss = 0
+    sum_aux_loss = 0
     sum_loss_gen_adv = 0
     sum_loss_dis_real = 0
     sum_loss_dis_fake = 0
@@ -54,7 +56,8 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train
     dis_real_dist = []
     dis_fake_dist = []
 
-    for itr, (X_batch, y_batch) in enumerate(tqdm(dataloader)):
+    train_loop = tqdm(dataloader)
+    for itr, (X_batch, y_batch) in enumerate(train_loop):
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device)
 
@@ -64,51 +67,59 @@ def train_epoch(dataloader, model, device, optimizers, use_adv_loss=False, train
         if train_discriminator:
             model.set_requires_grad(model.discriminator, True)
             pred_real = model.discriminator_forward(X_batch, y_batch)
-            loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
-            dis_real_dist += torch.sigmoid(pred_real).detach().cpu().numpy().flatten().tolist()
-
             pred_fake = model.discriminator_forward(X_batch, (pred * X_batch).detach())
+            
+            loss_real = gan_crit(pred_real, torch.ones_like(pred_real))
             loss_fake = gan_crit(pred_fake, torch.zeros_like(pred_fake))
-            dis_fake_dist += torch.sigmoid(pred_fake).detach().cpu().numpy().flatten().tolist()
-
-            loss = 0.5 * (loss_real + loss_fake)
-            loss.backward()
+            d_loss = 0.5 * (loss_real + loss_fake)
+            optimizer_D.zero_grad()
+            d_loss.backward()
             optimizer_D.step()
-            model.discriminator.zero_grad()
 
             sum_loss_dis_real += loss_real.item() * len(X_batch)
             sum_loss_dis_fake += loss_fake.item() * len(X_batch)
+            
+            dis_fake_dist += torch.sigmoid(pred_fake).detach().cpu().numpy().flatten().tolist()
+            dis_real_dist += torch.sigmoid(pred_real).detach().cpu().numpy().flatten().tolist()
+
 
         # ----- Train Generator ------
         if train_generator:
             loss_main = pixel_crit(pred * X_batch, y_batch)
             loss_aux = pixel_crit(aux * X_batch, y_batch)
             if use_adv_loss:
-                model.set_requires_grad(model.discriminator, False)
+                # model.set_requires_grad(model.discriminator, False)
                 pred_fake = model.discriminator_forward(X_batch, pred * X_batch)
                 loss_gan = gan_crit(pred_fake, torch.ones_like(pred_fake))
-                gen_dist += torch.sigmoid(pred_fake).detach().cpu().numpy().flatten().tolist()
-                loss = loss_main * 0.8 + loss_aux * 0.1 + loss_gan * 0.1
+                g_loss = loss_main + loss_aux * 1e-2 + loss_gan * 1e-3
+                
+                dist = torch.sigmoid(pred_fake).detach().cpu().numpy().flatten().tolist()
+                gen_dist += dist
             else:
-                loss = loss_main * 0.8 + loss_aux * 0.2
-            loss.backward()
+                g_loss = loss_main + loss_aux * 1e-2
+            optimizer_G.zero_grad()
+            g_loss.backward()
             optimizer_G.step()
-            model.generator.zero_grad()
+            train_loop.set_postfix({'g_loss': g_loss.item(), 'd_loss': d_loss.item()}) if train_discriminator else train_loop.set_postfix({'g_loss': g_loss.item()})
 
             # The ratio 8:2 here is for comparsion on previous models without GAN 
-            sum_loss_l1 += (loss_main * 0.8 + loss_aux * 0.2).item() * len(X_batch)
+            sum_loss += (loss_main + loss_aux * 1e-2).item() * len(X_batch)
+            sum_content_loss += loss_main.item() * len(X_batch)
+            sum_aux_loss += loss_aux.item() * len(X_batch)
             if use_adv_loss:
                 sum_loss_gen_adv += loss_gan.item() * len(X_batch)
 
     dateset_len = len(dataloader.dataset)
     return {
-      'train/loss': sum_loss_l1 / dateset_len,
-      'train/gen_adv_loss': sum_loss_gen_adv / dateset_len,
-      'train/dis_real_loss': sum_loss_dis_real / dateset_len,
-      'train/dis_fake_loss': sum_loss_dis_fake / dateset_len,
-      'train/gen_dist': wandb.Histogram(gen_dist),
-      'train/dis_real_dist':wandb.Histogram(dis_real_dist),
-      'train/dis_fake_dist': wandb.Histogram(dis_fake_dist),
+      'generator/loss': sum_loss / dateset_len,
+      'generator/content_loss': sum_content_loss / dateset_len,
+      'generator/aux_loss': sum_aux_loss / dateset_len,
+      'generator/gen_adv_loss': sum_loss_gen_adv / dateset_len,
+      'discriminator/dis_real_loss': sum_loss_dis_real / dateset_len,
+      'discriminator/dis_fake_loss': sum_loss_dis_fake / dateset_len,
+      'discriminator/gen_dist': wandb.Histogram(gen_dist),
+      'discriminator/dis_real_dist':wandb.Histogram(dis_real_dist),
+      'discriminator/dis_fake_dist': wandb.Histogram(dis_fake_dist),
     }
 
 def validate_epoch(dataloader, model, device):
@@ -136,11 +147,11 @@ def validate_epoch(dataloader, model, device):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--gpu', '-g', type=int, default=-1)
-    p.add_argument('--seed', '-s', type=int, default=2019)
+    p.add_argument('--seed', '-s', type=int, default=42)
     p.add_argument('--sr', '-r', type=int, default=44100)
     p.add_argument('--hop_length', '-H', type=int, default=1024)
     p.add_argument('--n_fft', '-f', type=int, default=2048)
-    p.add_argument('--dataset', '-d', required=True)
+    p.add_argument('--dataset', '-d', default='data')
     p.add_argument('--split_mode', '-S', type=str, choices=['random', 'subdirs'], default='random')
     p.add_argument('--learning_rate', '-l', type=float, default=1e-3)
     p.add_argument('--lr_min', type=float, default=1e-4)
@@ -162,6 +173,8 @@ def main():
     p.add_argument('--mixup_alpha', '-a', type=float, default=1.0)
     p.add_argument('--pretrained_model', '-P', type=str, default=None)
     p.add_argument('--debug', action='store_true')
+    p.add_argument('--use_bn', type=bool, default=True)
+    p.add_argument('--strict', action='store_true')
     args = p.parse_args()
 
     logger.debug(vars(args))
@@ -187,16 +200,16 @@ def main():
         train_filelist = train_filelist[:1]
         val_filelist = val_filelist[:1]
     elif args.val_filelist is None and args.split_mode == 'random':
-        with open('val_{}.json'.format(timestamp), 'w', encoding='utf8') as f:
+        with open('log/val_{}.json'.format(timestamp), 'w', encoding='utf8') as f:
             json.dump(val_filelist, f, ensure_ascii=False)
 
     for i, (X_fname, y_fname) in enumerate(val_filelist):
         logger.info('{} {} {}'.format(i + 1, os.path.basename(X_fname), os.path.basename(y_fname)))
 
     device = torch.device('cpu')
-    model = nets.CascadedNetWithGAN(args.n_fft)
+    model = nets.CascadedNetWithGAN(args.n_fft, use_bn=args.use_bn)
     if args.pretrained_model is not None:
-        model.load_state_dict(torch.load(args.pretrained_model, map_location=device))
+        model.load_state_dict(torch.load(args.pretrained_model, map_location=device), strict=args.strict)
     if torch.cuda.is_available() and args.gpu >= 0:
         device = torch.device('cuda:{}'.format(args.gpu))
         model.to(device)
@@ -258,7 +271,8 @@ def main():
         dataset=train_dataset,
         batch_size=args.batchsize,
         shuffle=True,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        pin_memory=True if torch.cuda.is_available() else False
     )
 
     patch_list = dataset.make_validation_set(
@@ -278,7 +292,8 @@ def main():
         dataset=val_dataset,
         batch_size=args.val_batchsize,
         shuffle=False,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        pin_memory=True if torch.cuda.is_available() else False
     )
 
     log = []
@@ -286,31 +301,30 @@ def main():
     for epoch in range(args.epoch):
         logger.info('# epoch {}'.format(epoch))
         
-        use_adv_loss = epoch >= 15
-        train_discriminator = True # epoch >= 10
-        train_generator = epoch >= 10
+        train_discriminator = True
+        use_adv_loss = True
+        train_generator = True
         train_loss = train_epoch(train_dataloader, model, device, optimizers, use_adv_loss, train_discriminator, train_generator)
         val_loss = validate_epoch(val_dataloader, model, device)
-
         log_data = {
-          **train_loss,
-          **val_loss
+            **train_loss,
+            **val_loss
         }
         wandb.log(log_data)
-        if epoch % 5 == 0 or epoch == args.epoch - 1:
+        if epoch % 1 == 0 or epoch == args.epoch - 1:
             log_data = {}
-            val_paths = glob.glob('/project/asc2022/plus/DeepMDX/data/val/*.wav')
-            save_dir = '/project/asc2022/plus/DeepMDX'
+            val_paths = glob.glob('./data/val/*.wav')
+            save_dir = './log/image'
             for val_path in val_paths:
                 audio_name = Path(val_path).stem
                 instrument_wave, vocal_wave, instrument_image, vocal_image = inference(model, device, val_path, save_dir)
-                log_data[f'val/instrument_wav_{audio_name}'] = wandb.Audio(instrument_wave.T, sample_rate=44100)
-                log_data[f'val/vocal_wav_{audio_name}'] = wandb.Audio(vocal_wave.T, sample_rate=44100)
-                log_data[f'val/instrument_spectrogram_{audio_name}'] = wandb.Image(instrument_image)
-                log_data[f'val/vocal_spectrogram_{audio_name}'] = wandb.Image(vocal_image)
+                log_data[f'val_wav/instrument_wav_{audio_name}'] = wandb.Audio(instrument_wave.T, sample_rate=44100)
+                log_data[f'val_wav/vocal_wav_{audio_name}'] = wandb.Audio(vocal_wave.T, sample_rate=44100)
+                log_data[f'val_spec/instrument_spectrogram_{audio_name}'] = wandb.Image(instrument_image)
+                log_data[f'val_spec/vocal_spectrogram_{audio_name}'] = wandb.Image(vocal_image)
             wandb.log(log_data)
 
-        train_loss = train_loss['train/loss']
+        train_loss = train_loss['generator/loss']
         val_loss = val_loss['val/loss']
         if train_generator:
             scheduler_G.step(val_loss)
@@ -327,7 +341,7 @@ def main():
 
 if __name__ == '__main__':
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    logger = setup_logger(__name__, 'train_{}.log'.format(timestamp))
+    logger = setup_logger(__name__, 'log/train_{}.log'.format(timestamp))
     wandb.init(project="Music Demixing")
 
     try:

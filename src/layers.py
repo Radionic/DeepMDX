@@ -20,10 +20,14 @@ class Conv2DBNActiv(nn.Module):
         self.use_bn = use_bn
         if self.use_bn:
             self.bn = nn.BatchNorm2d(nout)
-        self.activ = activ()
+        if isinstance(activ, nn.LeakyReLU):
+            self.activ = activ(0.2)
+        else:
+            self.activ = activ()
     
         _weights_init(self.conv)
-        _weights_init(self.bn)
+        if self.use_bn:
+            _weights_init(self.bn)
 
     def __call__(self, x):
         x = self.conv(x)

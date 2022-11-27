@@ -162,7 +162,8 @@ class CascadedNetWithGAN(nn.Module):
     def __init__(self, n_fft, nout=32, nout_lstm=128, use_bn=True):
         super(CascadedNetWithGAN, self).__init__()
         self.generator = CascadedNet(n_fft, nout, nout_lstm, use_bn=use_bn)
-        self.discriminator = Discriminator(4)
+        # self.discriminator = Discriminator(4)
+        self.discriminator = Discriminator(2)
       
     def set_requires_grad(self, net, requires_grad):
         if net is not None:
@@ -172,30 +173,33 @@ class CascadedNetWithGAN(nn.Module):
     def generator_forward(self, x):
         return self.generator(x)
 
-    def discriminator_forward(self, x, y):
-        # (B, 2, max_bin, W)
-        x = x[:, :, :self.generator.max_bin]
+    # def discriminator_forward(self, x, y):
+    #     # (B, 2, max_bin, W)
+    #     x = x[:, :, :self.generator.max_bin]
+    #     # (B, 2, max_bin, W)
+    #     y = y[:, :, :self.generator.max_bin]
+    #     input = torch.cat([x, y], dim=1)
+    #     return self.discriminator(input)
+    def discriminator_forward(self, y):
         # (B, 2, max_bin, W)
         y = y[:, :, :self.generator.max_bin]
-        input = torch.cat([x, y], dim=1)
-        return self.discriminator(input)
+        return self.discriminator(y)
 
 class Discriminator(nn.Module):
 
     def __init__(self, in_channels):
         super(Discriminator, self).__init__()
-        self.model = nn.Sequential(
-            Conv2DBNActiv(in_channels, 32, 3, 1, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(32, 32, 3, 2, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(32, 64, 3, 1, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(64, 64, 3, 2, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(64, 128, 3, 1, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(128, 128, 3, 2, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(128, 256, 3, 1, 1, activ=nn.LeakyReLU),
-            Conv2DBNActiv(256, 256, 3, 2, 1, activ=nn.LeakyReLU),
-            
-            nn.Conv2d(256, 1, 3, 1, 1),
-        )
+        in_filters = in_channels
+        layers = []
+        for i, out_filters in enumerate([64, 128, 256, 512]):
+            if i != 0:
+                layers.append(Conv2DBNActiv(in_filters, out_filters, 3, 1, 1, activ=nn.LeakyReLU))
+            else:
+                layers.append(Conv2DBNActiv(in_filters, out_filters, 3, 1, 1, activ=nn.LeakyReLU, use_bn=False))
+            layers.append(Conv2DBNActiv(out_filters, out_filters, 3, 2, 1, activ=nn.LeakyReLU))
+            in_filters = out_filters
+        layers.append(nn.Conv2d(in_filters, 1, 3, 1, 1))
+        self.model = nn.Sequential(*layers)
 
     def forward(self, x):
         return self.model(x)
