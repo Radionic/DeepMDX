@@ -7,22 +7,29 @@ seed: 42
 
 dataset_dir: data
 
+use_gan: True
 model:
   batch_size: ${batch_size}
   num_workers: ${num_workers}
-  lr_g: 1e-3
-  lr_d: 2e-4
+  lr: 1e-4
+  lr_min: 1e-5
+  lr_check_interval: ${trainer.check_val_every_n_epoch}
+  lr_decay_factor: 0.7
+  lr_decay_patience: 2
   lambda_aux: 2e-1
   lambda_adv: 1e-3
   warmup_steps_d:
   warmup_steps_g:
   generator_step: 1
-  discriminator_step: 2
+  discriminator_step: 1
+  g_loss_scale: 200
+  d_loss_scale: 1
 
 datamodule:
   batch_size: ${batch_size}
   num_workers: ${num_workers}
   dataset_dir: ${dataset_dir}
+  val_filelist: data/val_20221122115030.json
   reduction_rate: 0.5
   mixup_rate: 0.5
 
@@ -35,10 +42,10 @@ trainer:
   _target_: pytorch_lightning.Trainer
   accelerator: gpu
   devices: 1
-  log_every_n_steps: 50
+  log_every_n_steps: 200
   max_epochs: 500
   val_check_interval: null
-  check_val_every_n_epoch: 2
+  check_val_every_n_epoch: 3
   gradient_clip_val: 1.0
   callbacks:
     - _target_: pytorch_lightning.callbacks.ModelSummary
@@ -46,8 +53,8 @@ trainer:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
       logging_interval: step
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
-      dirpath: checkpoints/gan_bce
-      filename: '{epoch:02d}-{val_loss:.2f}'
+      dirpath: checkpoints/extended_mse
+      filename: '{epoch:02d}-{val_loss:.5f}'
       monitor: val_loss
       save_top_k: 3
       mode: min

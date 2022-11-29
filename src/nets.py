@@ -7,21 +7,21 @@ from src.layers import Encoder, Decoder, Conv2DBNActiv, LSTMModule, ASPPModule
 
 class BaseNet(nn.Module):
 
-    def __init__(self, nin, nout, nin_lstm, nout_lstm, dilations=((4, 2), (8, 4), (12, 6)), use_bn=True):
+    def __init__(self, nin, nout, nin_lstm, nout_lstm, dilations=((4, 2), (8, 4), (12, 6)), activ=nn.ReLU, use_bn=True):
         super(BaseNet, self).__init__()
-        self.enc1 = Conv2DBNActiv(nin, nout, 3, 1, 1, use_bn=use_bn)
-        self.enc2 = Encoder(nout, nout * 2, 3, 2, 1, use_bn=use_bn)
-        self.enc3 = Encoder(nout * 2, nout * 4, 3, 2, 1, use_bn=use_bn)
-        self.enc4 = Encoder(nout * 4, nout * 6, 3, 2, 1, use_bn=use_bn)
-        self.enc5 = Encoder(nout * 6, nout * 8, 3, 2, 1, use_bn=use_bn)
+        self.enc1 = Conv2DBNActiv(nin, nout, 3, 1, 1, activ=activ, use_bn=use_bn)
+        self.enc2 = Encoder(nout, nout * 2, 3, 2, 1, activ=activ, use_bn=use_bn)
+        self.enc3 = Encoder(nout * 2, nout * 4, 3, 2, 1, activ=activ, use_bn=use_bn)
+        self.enc4 = Encoder(nout * 4, nout * 6, 3, 2, 1, activ=activ, use_bn=use_bn)
+        self.enc5 = Encoder(nout * 6, nout * 8, 3, 2, 1, activ=activ, use_bn=use_bn)
 
-        self.aspp = ASPPModule(nout * 8, nout * 8, dilations, dropout=True, use_bn=use_bn)
+        self.aspp = ASPPModule(nout * 8, nout * 8, dilations, dropout=True, activ=activ, use_bn=use_bn)
 
-        self.dec4 = Decoder(nout * (6 + 8), nout * 6, 3, 1, 1, use_bn=use_bn)
-        self.dec3 = Decoder(nout * (4 + 6), nout * 4, 3, 1, 1, use_bn=use_bn)
-        self.dec2 = Decoder(nout * (2 + 4), nout * 2, 3, 1, 1, use_bn=use_bn)
-        self.lstm_dec2 = LSTMModule(nout * 2, nin_lstm, nout_lstm, use_bn=use_bn)
-        self.dec1 = Decoder(nout * (1 + 2) + 1, nout * 1, 3, 1, 1, use_bn=use_bn)
+        self.dec4 = Decoder(nout * (6 + 8), nout * 6, 3, 1, 1, activ=activ, use_bn=use_bn)
+        self.dec3 = Decoder(nout * (4 + 6), nout * 4, 3, 1, 1, activ=activ, use_bn=use_bn)
+        self.dec2 = Decoder(nout * (2 + 4), nout * 2, 3, 1, 1, activ=activ, use_bn=use_bn)
+        self.lstm_dec2 = LSTMModule(nout * 2, nin_lstm, nout_lstm, activ=activ, use_bn=use_bn)
+        self.dec1 = Decoder(nout * (1 + 2) + 1, nout * 1, 3, 1, 1, activ=activ, use_bn=use_bn)
 
     def __call__(self, x):
         e1 = self.enc1(x)
@@ -43,7 +43,7 @@ class BaseNet(nn.Module):
 
 class CascadedNet(nn.Module):
 
-    def __init__(self, n_fft, nout=32, nout_lstm=128, use_bn=True):
+    def __init__(self, n_fft, nout=32, nout_lstm=128, activ=nn.ReLU, use_bn=True):
         super(CascadedNet, self).__init__()
         self.max_bin = n_fft // 2
         self.output_bin = n_fft // 2 + 1
@@ -51,23 +51,23 @@ class CascadedNet(nn.Module):
         nin_lstm = self.max_bin // 2
 
         self.stg1_low_band_net = nn.Sequential(
-            BaseNet(2, nout // 2, nin_lstm // 2, nout_lstm, use_bn=use_bn),
-            Conv2DBNActiv(nout // 2, nout // 4, 1, 1, 0, use_bn=use_bn)
+            BaseNet(2, nout // 2, nin_lstm // 2, nout_lstm, activ=activ, use_bn=use_bn),
+            Conv2DBNActiv(nout // 2, nout // 4, 1, 1, 0, activ=activ, use_bn=use_bn)
         )
         self.stg1_high_band_net = BaseNet(
-            2, nout // 4, nin_lstm // 2, nout_lstm // 2, use_bn=use_bn
+            2, nout // 4, nin_lstm // 2, nout_lstm // 2, activ=activ, use_bn=use_bn
         )
 
         self.stg2_low_band_net = nn.Sequential(
-            BaseNet(nout // 4 + 2, nout, nin_lstm // 2, nout_lstm, use_bn=use_bn),
-            Conv2DBNActiv(nout, nout // 2, 1, 1, 0, use_bn=use_bn)
+            BaseNet(nout // 4 + 2, nout, nin_lstm // 2, nout_lstm, activ=activ, use_bn=use_bn),
+            Conv2DBNActiv(nout, nout // 2, 1, 1, 0, activ=activ, use_bn=use_bn)
         )
         self.stg2_high_band_net = BaseNet(
-            nout // 4 + 2, nout // 2, nin_lstm // 2, nout_lstm // 2, use_bn=use_bn
+            nout // 4 + 2, nout // 2, nin_lstm // 2, nout_lstm // 2, activ=activ, use_bn=use_bn
         )
 
         self.stg3_full_band_net = BaseNet(
-            3 * nout // 4 + 2, nout, nin_lstm, nout_lstm, use_bn=use_bn
+            3 * nout // 4 + 2, nout, nin_lstm, nout_lstm, activ=activ, use_bn=use_bn
         )
 
         self.out = nn.Conv2d(nout, 2, 1, bias=False)
@@ -158,10 +158,23 @@ class CascadedNet(nn.Module):
 
         return pred_mag
 
+class CascadedNetNoGAN(nn.Module):
+    def __init__(self, n_fft, nout=32, nout_lstm=128, use_bn=True):
+        super(CascadedNetNoGAN, self).__init__()
+        self.generator = CascadedNet(n_fft, nout, nout_lstm, activ=nn.LeakyReLU, use_bn=use_bn)
+      
+    def set_requires_grad(self, net, requires_grad):
+        if net is not None:
+            for param in net.parameters():
+                param.requires_grad = requires_grad
+
+    def generator_forward(self, x):
+        return self.generator(x)
+    
 class CascadedNetWithGAN(nn.Module):
     def __init__(self, n_fft, nout=32, nout_lstm=128, use_bn=True):
         super(CascadedNetWithGAN, self).__init__()
-        self.generator = CascadedNet(n_fft, nout, nout_lstm, use_bn=use_bn)
+        self.generator = CascadedNet(n_fft, nout, nout_lstm, activ=nn.LeakyReLU, use_bn=use_bn)
         # self.discriminator = Discriminator(4)
         self.discriminator = Discriminator(2)
       
