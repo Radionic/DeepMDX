@@ -20,10 +20,7 @@ class Conv2DBNActiv(nn.Module):
         self.use_bn = use_bn
         if self.use_bn:
             self.bn = nn.BatchNorm2d(nout)
-        if isinstance(activ, nn.LeakyReLU):
-            self.activ = activ(0.2)
-        else:
-            self.activ = activ()
+        self.activ = activ()
     
         _weights_init(self.conv)
         if self.use_bn:
@@ -116,7 +113,7 @@ class ASPPModule(nn.Module):
 
 class LSTMModule(nn.Module):
 
-    def __init__(self, nin_conv, nin_lstm, nout_lstm, use_bn=True):
+    def __init__(self, nin_conv, nin_lstm, nout_lstm, activ=nn.ReLU, use_bn=True):
         super(LSTMModule, self).__init__()
         self.conv = Conv2DBNActiv(nin_conv, 1, 1, 1, 0, use_bn=use_bn)
         self.lstm = nn.LSTM(
@@ -124,16 +121,17 @@ class LSTMModule(nn.Module):
             hidden_size=nout_lstm // 2,
             bidirectional=True
         )
+        _activ = activ(0.2) if isinstance(activ, nn.LeakyReLU) else activ()
         if use_bn:
             self.dense = nn.Sequential(
                 nn.Linear(nout_lstm, nin_lstm),
-                nn.ReLU()
+                _activ,
             )
         else:
             self.dense = nn.Sequential(
                 nn.Linear(nout_lstm, nin_lstm),
                 nn.BatchNorm1d(nin_lstm),
-                nn.ReLU()
+                _activ,
             )
 
     def forward(self, x):

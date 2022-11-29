@@ -1,0 +1,59 @@
+batch_size: 4
+num_workers: 12
+name: null
+project: Music Demixing
+ckpt_path: null
+seed: 42
+
+dataset_dir: data
+
+use_gan: False
+model:
+  batch_size: ${batch_size}
+  num_workers: ${num_workers}
+  lr: 1e-3
+  lr_min: 1e-5
+  lr_check_interval: ${trainer.check_val_every_n_epoch}
+  lr_decay_factor: 0.9
+  lr_decay_patience: 2
+  lambda_aux: 2e-1
+  generator_step: 1
+  g_loss_scale: 200
+  nout: 
+  out_lstm: 128
+
+datamodule:
+  batch_size: ${batch_size}
+  num_workers: ${num_workers}
+  dataset_dir: ${dataset_dir}
+  val_filelist: data/val_20221122115030.json
+  reduction_rate: 0.5
+  mixup_rate: 0.5
+
+logger:
+  _target_: pytorch_lightning.loggers.WandbLogger
+  name: ${name}
+  project: ${project}
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  accelerator: gpu
+  devices: 1
+  log_every_n_steps: 100
+  max_epochs: 500
+  val_check_interval: null
+  check_val_every_n_epoch: 4
+  gradient_clip_val: 1.0
+  callbacks:
+    - _target_: pytorch_lightning.callbacks.ModelSummary
+      max_depth: 5
+    - _target_: pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: epoch
+    - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+      dirpath: checkpoints/extended_nogan
+      filename: '{epoch:02d}-{val_loss:.5f}'
+      monitor: val_loss
+      save_top_k: 3
+      mode: min
+      save_last: True
+      verbose: True
