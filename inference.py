@@ -161,15 +161,15 @@ def main():
 
     print('loading model...', end=' ')
     device = torch.device('cpu')
-    model = nets.CascadedNet(args.n_fft, 32, 128)
-    model.load_state_dict(torch.load(args.pretrained_model, map_location=device))
+    model = nets.CascadedNetWithGAN(args.n_fft, 32, 128)
+    model.load_state_dict(torch.load(args.pretrained_model, map_location=device)["state_dict"], strict=False)
     if torch.cuda.is_available() and args.gpu >= 0:
         device = torch.device('cuda:{}'.format(args.gpu))
         model.to(device)
     
     inference(
       model,
-      args.device,
+      device,
       args.input,
       args.sr,
       args.hop_length,
