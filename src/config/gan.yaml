@@ -11,11 +11,11 @@ use_gan: True
 model:
   batch_size: ${batch_size}
   num_workers: ${num_workers}
-  lr: 1e-4
+  lr: 2e-4
   lr_min: 1e-5
   lr_check_interval: ${trainer.check_val_every_n_epoch}
-  lr_decay_factor: 0.7
-  lr_decay_patience: 2
+  lr_decay_factor: 0.8
+  lr_decay_patience: 3
   lambda_aux: 2e-1
   lambda_adv: 1e-3
   warmup_steps_d:
@@ -45,7 +45,7 @@ trainer:
   log_every_n_steps: 200
   max_epochs: 500
   val_check_interval: null
-  check_val_every_n_epoch: 3
+  check_val_every_n_epoch: 2
   gradient_clip_val: 1.0
   callbacks:
     - _target_: pytorch_lightning.callbacks.ModelSummary
