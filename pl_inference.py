@@ -34,7 +34,7 @@ def main():
     ic(filepath, fileparent, filename, extension)
     if not args.input.endswith('.wav'):
         logger.info('Converting the audio file to wav...')
-        audio = AudioSegment.from_mp3(f"./{str(filepath)}")
+        audio = AudioSegment.from_mp3(f"{str(filepath)}")
         audio.export(f'{fileparent}/{filename}.wav', format='wav')
         filepath = f'{fileparent}/{filename}.wav'
         
